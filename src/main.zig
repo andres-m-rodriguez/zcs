@@ -15,9 +15,12 @@ pub fn main() !void {
         const command = std.mem.trimRight(u8, command_input, "\r");
         if (std.mem.eql(u8, command, "exit")) {
             is_running = false;
+        } else if (std.mem.eql(u8, command[0..4], "echo")) {
+            const echo_output = command[4..];
+            try stdout.print("{s}\n", .{echo_output});
         } else {
             try stdout.print("{s}: command not found\n", .{command});
-            try stdout.flush();
         }
+        try stdout.flush();
     }
 }
