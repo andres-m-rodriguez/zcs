@@ -16,7 +16,7 @@ pub fn main() !void {
         if (std.mem.eql(u8, command, "exit")) {
             is_running = false;
         } else if (std.mem.eql(u8, command[0..4], "echo")) {
-            const echo_output = command[4..];
+            const echo_output = command[5..]; // We  start at 5 due to the space
             try stdout.print("{s}\n", .{echo_output});
         } else {
             try stdout.print("{s}: command not found\n", .{command});
