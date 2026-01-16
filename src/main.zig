@@ -10,6 +10,9 @@ pub fn main() !void {
     const input_i = &input_reader.interface;
 
     const command = try input_i.takeDelimiter('\n');
-
-    try stdout.print("{s} command not found\n", .{command});
+    if (command) |command_value| {
+        try stdout.print("{s} command not found\n", .{command_value});
+    } else {
+        try stdout.print("Invalid input", .{});
+    }
 }
