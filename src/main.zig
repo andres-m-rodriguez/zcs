@@ -13,11 +13,11 @@ pub fn main() !void {
         const command_input = try input_i.takeDelimiter('\n') orelse "";
 
         const command = std.mem.trimRight(u8, command_input, "\r");
-        try stdout.print("{s}: command not found\n", .{command});
-        try stdout.flush();
-
-        if(std.mem.eql(u8,command, "exit")){
+        if (std.mem.eql(u8, command, "exit")) {
             is_running = false;
+        } else {
+            try stdout.print("{s}: command not found\n", .{command});
+            try stdout.flush();
         }
     }
 }
