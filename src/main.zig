@@ -5,5 +5,5 @@ const stdout = &stdout_writer.interface;
 
 pub fn main() !void {
     // TODO: Uncomment the code below to pass the first stage
-    // try stdout.print("$ ", .{});
+    try stdout.print("$ ", .{});
 }
