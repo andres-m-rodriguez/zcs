@@ -41,11 +41,11 @@ pub fn findExecutable(allocator: std.mem.Allocator, command: []const u8) ?[]cons
     return null;
 }
 
-pub fn executeCommandLine(allocator:std.mem.Allocator, command: []const u8, args:[] const u8) !void {
+pub fn executeCommandLine(allocator:std.mem.Allocator, command: []const u8, commandName:[]const u8, args:[] const u8) !void {
     var arg_list = std.ArrayList([]const u8) {};
     defer arg_list.deinit(allocator);
-
-    try arg_list.append(allocator, command);
+_ = command;
+    try arg_list.append(allocator, commandName);
     var args_it = std.mem.tokenizeScalar(u8, args, ' ');
     while(args_it.next()) |arg|{
         try arg_list.append(allocator, arg);

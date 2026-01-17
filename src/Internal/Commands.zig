@@ -74,7 +74,7 @@ pub const ConsoleApp = struct {
 
         const command_path = outerShell.findExecutable(allocator, commandName);
         if (command_path) |path| {
-            try outerShell.executeCommandLine(allocator, path, args);
+            try outerShell.executeCommandLine(allocator, path, commandName, args);
             return;
         }
 
