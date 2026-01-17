@@ -5,6 +5,7 @@ pub fn registerBuiltInCommands(builder: *console.ConsoleAppBuilder, allocator: s
     try builder.addCommand(allocator, "exit", handleExit);
     try builder.addCommand(allocator, "echo", handleEcho);
     try builder.addCommand(allocator, "type", handleType);
+    try builder.addCommand(allocator, "pwd", handlePwd);
 }
 
 pub fn handleExit(ctx: console.CommandContext) !void {
@@ -24,4 +25,12 @@ pub fn handleType(ctx: console.CommandContext) !void {
     } else {
         try ctx.output_writer.print("{s}: not found\n", .{ctx.args});
     }
+}
+pub fn handlePwd(ctx: console.CommandContext) !void {
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const cwd = std.fs.cwd().realpath(".", &buf) catch {
+        try ctx.output_writer.print("pwd: error getting current directory\n", .{});
+        return;
+    };
+    try ctx.output_writer.print("{s}\n", .{cwd});
 }
