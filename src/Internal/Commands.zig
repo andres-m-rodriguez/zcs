@@ -3,6 +3,7 @@ const OuterShell = @import("OuterShell.zig").OuterShell;
 const Terminal = @import("Terminal.zig").Terminal;
 const Key = @import("Terminal.zig").Key;
 const Parser = @import("Parser.zig");
+const History = @import("History.zig").History;
 
 pub const Handler = *const fn (ctx: CommandContext) anyerror!void;
 
@@ -91,6 +92,9 @@ pub const ConsoleApp = struct {
         var line = std.ArrayList(u8){};
         defer line.deinit(self.allocator);
 
+        var history = History.load(self.allocator) catch History.init(self.allocator);
+        defer history.deinit();
+
         var tab_index: usize = 0;
         var current_matches: []const []const u8 = &.{};
         var completion_arena = std.heap.ArenaAllocator.init(self.allocator);
@@ -116,6 +120,9 @@ pub const ConsoleApp = struct {
                     try terminal.flush();
 
                     if (line.items.len > 0) {
+                        try history.add(line.items);
+                        history.save() catch {};
+
                         var parsed = try Parser.parse(self.allocator, line.items);
                         defer parsed.deinit(self.allocator);
 
@@ -125,6 +132,7 @@ pub const ConsoleApp = struct {
                         }
                     }
 
+                    history.resetIndex();
                     line.clearRetainingCapacity();
                     tab_index = 0;
                     current_matches = &.{};
@@ -182,6 +190,17 @@ pub const ConsoleApp = struct {
                             tab_index -= 1;
                         }
                         try self.updateSelection(&terminal, &line, current_matches, tab_index, &display_len);
+                    } else {
+                        if (history.up()) |entry| {
+                            for (0..display_len) |_| {
+                                try terminal.backspace();
+                            }
+                            line.clearRetainingCapacity();
+                            try line.appendSlice(self.allocator, entry);
+                            display_len = entry.len;
+                            try terminal.print("{s}", .{entry});
+                            try terminal.flush();
+                        }
                     }
                 },
                 .down => {
@@ -191,6 +210,19 @@ pub const ConsoleApp = struct {
                             tab_index = 0;
                         }
                         try self.updateSelection(&terminal, &line, current_matches, tab_index, &display_len);
+                    } else {
+                        for (0..display_len) |_| {
+                            try terminal.backspace();
+                        }
+                        line.clearRetainingCapacity();
+                        if (history.down()) |entry| {
+                            try line.appendSlice(self.allocator, entry);
+                            display_len = entry.len;
+                            try terminal.print("{s}", .{entry});
+                        } else {
+                            display_len = 0;
+                        }
+                        try terminal.flush();
                     }
                 },
                 .escape => {
