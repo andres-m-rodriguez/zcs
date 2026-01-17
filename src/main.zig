@@ -57,8 +57,40 @@ pub fn handleEcho(ctx: console.CommandContext) !void {
 pub fn handleType(ctx: console.CommandContext) !void {
     const built_in_command = ctx.app.findBuiltInCommand(ctx.args);
     if (built_in_command) |_| {
-        try ctx.output_writer.print("{s} is a shell builtin \n", .{ctx.args});
-    } else {
-        try ctx.output_writer.print("{s}: not found \n", .{ctx.args});
+        try ctx.output_writer.print("{s} is a shell builtin\n", .{ctx.args});
+        return;
     }
+
+    const path_env = std.posix.getenv("PATH") orelse {
+        try ctx.output_writer.print("{s}: not found\n", .{ctx.args});
+        return;
+    };
+
+
+    const separator = if (@import("builtin").os.tag == .windows) ';' else ':';
+    var path_iter = std.mem.splitScalar(u8, path_env, separator);
+
+    while (path_iter.next()) |dir| {
+        var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const full_path = std.fmt.bufPrint(&path_buf, "{s}{c}{s}", .{
+            dir,
+            std.fs.path.sep,
+            ctx.args,
+        }) catch continue;
+
+
+        const file = std.fs.openFileAbsolute(full_path, .{}) catch continue;
+        defer file.close();
+
+        if (@import("builtin").os.tag != .windows) {
+            const stat = file.stat() catch continue;
+            const is_executable = (stat.mode & std.posix.S.IXUSR) != 0;
+            if (!is_executable) continue;
+        }
+
+        try ctx.output_writer.print("{s} is {s}\n", .{ ctx.args, full_path });
+        return;
+    }
+
+    try ctx.output_writer.print("{s}: not found\n", .{ctx.args});
 }
