@@ -93,9 +93,9 @@ pub const OuterShell = struct {
                 }
             } else {
                 const full = std.fmt.bufPrint(&path_buf, "{s}{c}{s}", .{ dir, std.fs.path.sep, command }) catch continue;
-                if (std.fs.cwd().access(full, .{})) |_| {
-                    return self.allocator.dupe(u8, full) catch return null;
-                } else |_| {}
+                const file = std.fs.openFileAbsolute(full, .{}) catch continue;
+                file.close();
+                return self.allocator.dupe(u8, full) catch return null;
             }
         }
         return null;
