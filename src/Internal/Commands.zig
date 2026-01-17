@@ -144,7 +144,10 @@ pub const ConsoleApp = struct {
                         current_matches = try self.findCompletions(completion_arena.allocator(), original_prefix);
                         tab_index = 0;
                         display_len = line.items.len;
-                        try terminal.print("\x07", .{});
+                        // TODO: Remove bell sound later
+                        if (current_matches.len == 0) {
+                            try terminal.print("\x07", .{});
+                        }
                     }
 
                     if (current_matches.len > 0) {
