@@ -109,12 +109,12 @@ pub const OuterShell = struct {
     }
 
     pub fn executeCommandParsed(self: *OuterShell, commandName: []const u8, args: []const []const u8) !void {
-        const path = self.findExecutable(commandName) orelse return error.CommandNotFound;
+        _ = self.findExecutable(commandName) orelse return error.CommandNotFound;
 
         var arg_list = std.ArrayListUnmanaged([]const u8){};
         defer arg_list.deinit(self.allocator);
 
-        try arg_list.append(self.allocator, path);
+        try arg_list.append(self.allocator, commandName);
 
         for (args) |arg| {
             try arg_list.append(self.allocator, arg);
