@@ -1,102 +1,274 @@
 const std = @import("std");
 const OuterShell = @import("OuterShell.zig").OuterShell;
+const Terminal = @import("Terminal.zig").Terminal;
+const Key = @import("Terminal.zig").Key;
 
-pub const Handler = *const fn (commandContext: CommandContext) anyerror!void;
+pub const Handler = *const fn (ctx: CommandContext) anyerror!void;
+
 pub const CommandContext = struct {
     app: *ConsoleApp,
-    output_writer: *std.Io.Writer,
+    terminal: *Terminal,
     allocator: std.mem.Allocator,
     command_name: []const u8,
     args: []const u8,
     raw_input: []const u8,
-    outer_shell: *OuterShell,
 };
-pub const ConsoleAppBuilder = struct {
-    commands: std.StringHashMapUnmanaged(Handler),
-    output_writer: *std.Io.Writer = undefined,
-    outer_shell: *OuterShell = undefined,
 
-    pub fn addCommand(
-        self: *ConsoleAppBuilder,
-        allocator: std.mem.Allocator,
-        comptime commandName: []const u8,
-        commandHandler: Handler,
-    ) !void {
-        const command_name_l = comptime comptimeLower(commandName);
-        try self.commands.put(allocator, command_name_l, commandHandler);
+pub const ConsoleAppBuilder = struct {
+    commands: std.StringHashMapUnmanaged(Handler) = .{},
+    allocator: std.mem.Allocator,
+    prompt: []const u8 = "$ ",
+
+    pub fn init(allocator: std.mem.Allocator) ConsoleAppBuilder {
+        return .{ .allocator = allocator };
     }
-    pub fn addWriter(self: *ConsoleAppBuilder, writer: *std.Io.Writer) void {
-        self.output_writer = writer;
+
+    pub fn addCommand(self: *ConsoleAppBuilder, comptime name: []const u8, handler: Handler) !void {
+        const name_lower = comptime comptimeLower(name);
+        try self.commands.put(self.allocator, name_lower, handler);
     }
-    pub fn addOuterShell(self: *ConsoleAppBuilder, shell: *OuterShell) void {
-        self.outer_shell = shell;
+
+    pub fn setPrompt(self: *ConsoleAppBuilder, prompt: []const u8) void {
+        self.prompt = prompt;
     }
-    pub fn build(self: *ConsoleAppBuilder) ConsoleApp {
+
+    pub fn build(self: *ConsoleAppBuilder) !ConsoleApp {
+        const outer_shell = try OuterShell.init(self.allocator);
         return ConsoleApp{
-            .app_builder = self,
+            .builder = self,
+            .outer_shell = outer_shell,
+            .allocator = self.allocator,
             .is_running = false,
-            .output_writer = self.output_writer,
-            .outer_shell = self.outer_shell,
         };
     }
-    pub fn deinit(self: *ConsoleAppBuilder, allocator: std.mem.Allocator) void {
-        self.commands.deinit(allocator);
+
+    pub fn deinit(self: *ConsoleAppBuilder) void {
+        self.commands.deinit(self.allocator);
     }
 };
 
 pub const ConsoleApp = struct {
-    app_builder: *ConsoleAppBuilder,
-    output_writer: *std.Io.Writer,
-    outer_shell: *OuterShell,
-
+    builder: *ConsoleAppBuilder,
+    outer_shell: OuterShell,
+    allocator: std.mem.Allocator,
     is_running: bool,
-    pub fn findBuiltInCommand(self: *ConsoleApp, commandName: []const u8) ?Handler {
-        var lower_buf: [256]u8 = undefined;
-        const command_name_l = std.ascii.lowerString(lower_buf[0..commandName.len], commandName);
 
-        const commandHandler = self.app_builder.commands.get(command_name_l) orelse return null;
-        return commandHandler;
+    pub fn deinit(self: *ConsoleApp) void {
+        self.outer_shell.deinit();
     }
 
-    pub fn handleCommand(
-        self: *ConsoleApp,
-        allocator: std.mem.Allocator,
-        commandName: []const u8,
-        args: []const u8,
-        rawInput: []const u8,
-    ) !void {
+    pub fn runShell(self: *ConsoleApp) !void {
+        var terminal = try Terminal.init();
+        defer terminal.deinit();
+
+        self.is_running = true;
+
+        var line = std.ArrayList(u8){};
+        defer line.deinit(self.allocator);
+
+        var tab_index: usize = 0;
+        var current_matches: []const []const u8 = &.{};
+        var completion_arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer completion_arena.deinit();
+        var original_prefix: []const u8 = &.{};
+        var display_len: usize = 0;
+        var dropdown_open = false;
+
+        try terminal.print("{s}", .{self.builder.prompt});
+        try terminal.flush();
+
+        while (self.is_running) {
+            const key = try Key.read(&terminal);
+
+            switch (key) {
+                .enter => {
+                    if (dropdown_open) {
+                        try self.clearDropdown(&terminal, current_matches.len);
+                        dropdown_open = false;
+                    }
+
+                    try terminal.print("\n", .{});
+                    try terminal.flush();
+
+                    if (line.items.len > 0) {
+                        const input = line.items;
+                        var iter = std.mem.tokenizeScalar(u8, input, ' ');
+                        const command_name = iter.next() orelse "";
+                        const args_start = if (command_name.len < input.len) command_name.len + 1 else command_name.len;
+                        const args = if (args_start < input.len) input[args_start..] else "";
+
+                        try self.handleCommand(&terminal, command_name, args, input);
+                        try terminal.flush();
+                    }
+
+                    line.clearRetainingCapacity();
+                    tab_index = 0;
+                    current_matches = &.{};
+                    _ = completion_arena.reset(.retain_capacity);
+                    original_prefix = &.{};
+                    display_len = 0;
+
+                    if (self.is_running) {
+                        try terminal.print("{s}", .{self.builder.prompt});
+                        try terminal.flush();
+                    }
+                },
+                .tab => {
+                    if (current_matches.len == 0) {
+                        _ = completion_arena.reset(.retain_capacity);
+                        original_prefix = try completion_arena.allocator().dupe(u8, line.items);
+                        current_matches = try self.findCompletions(completion_arena.allocator(), original_prefix);
+                        tab_index = 0;
+                        display_len = line.items.len;
+                    }
+
+                    if (current_matches.len > 0) {
+                        if (tab_index >= current_matches.len) {
+                            tab_index = 0;
+                        }
+                        const match = current_matches[tab_index];
+
+                        for (0..display_len) |_| {
+                            try terminal.backspace();
+                        }
+
+                        line.clearRetainingCapacity();
+                        try line.appendSlice(self.allocator, match);
+                        display_len = match.len;
+
+                        try terminal.print("{s}", .{match});
+
+                        if (current_matches.len > 1) {
+                            try self.renderDropdown(&terminal, current_matches, tab_index);
+                            dropdown_open = true;
+                        }
+
+                        try terminal.flush();
+                        tab_index += 1;
+                    }
+                },
+                .up => {
+                    if (dropdown_open and current_matches.len > 0) {
+                        if (tab_index == 0) {
+                            tab_index = current_matches.len - 1;
+                        } else {
+                            tab_index -= 1;
+                        }
+                        try self.updateSelection(&terminal, &line, current_matches, tab_index, &display_len);
+                    }
+                },
+                .down => {
+                    if (dropdown_open and current_matches.len > 0) {
+                        tab_index += 1;
+                        if (tab_index >= current_matches.len) {
+                            tab_index = 0;
+                        }
+                        try self.updateSelection(&terminal, &line, current_matches, tab_index, &display_len);
+                    }
+                },
+                .escape => {
+                    if (dropdown_open) {
+                        try self.clearDropdown(&terminal, current_matches.len);
+                        dropdown_open = false;
+                        current_matches = &.{};
+                        tab_index = 0;
+                        try terminal.flush();
+                    }
+                },
+                .backspace => {
+                    if (dropdown_open) {
+                        try self.clearDropdown(&terminal, current_matches.len);
+                        dropdown_open = false;
+                    }
+                    if (line.items.len > 0) {
+                        _ = line.pop();
+                        try terminal.backspace();
+                        try terminal.flush();
+                        display_len = line.items.len;
+                    }
+                    tab_index = 0;
+                    current_matches = &.{};
+                },
+                .char => |c| {
+                    if (dropdown_open) {
+                        try self.clearDropdown(&terminal, current_matches.len);
+                        dropdown_open = false;
+                    }
+                    try line.append(self.allocator, c);
+                    try terminal.print("{c}", .{c});
+                    try terminal.flush();
+                    display_len = line.items.len;
+                    tab_index = 0;
+                    current_matches = &.{};
+                },
+                else => {
+                    tab_index = 0;
+                    current_matches = &.{};
+                },
+            }
+        }
+    }
+
+    pub fn runCli(self: *ConsoleApp, args: []const []const u8) !void {
+        if (args.len < 2) {
+            var buf: [1024]u8 = undefined;
+            var stderr = std.fs.File.stderr().writerStreaming(&buf);
+            try stderr.interface.print("Usage: {s} <command> [args...]\n", .{args[0]});
+            try stderr.interface.flush();
+            return;
+        }
+
+        var terminal = try Terminal.init();
+        defer terminal.deinit();
+
+        const command_name = args[1];
+        var arg_buf = std.ArrayList(u8){};
+        defer arg_buf.deinit(self.allocator);
+
+        for (args[2..]) |arg| {
+            if (arg_buf.items.len > 0) {
+                try arg_buf.append(self.allocator, ' ');
+            }
+            try arg_buf.appendSlice(self.allocator, arg);
+        }
+
+        try self.handleCommand(&terminal, command_name, arg_buf.items, command_name);
+        try terminal.flush();
+    }
+
+    fn handleCommand(self: *ConsoleApp, terminal: *Terminal, command_name: []const u8, args: []const u8, raw_input: []const u8) !void {
         const ctx = CommandContext{
             .app = self,
-            .output_writer = self.output_writer,
-            .allocator = allocator,
-            .command_name = commandName,
+            .terminal = terminal,
+            .allocator = self.allocator,
+            .command_name = command_name,
             .args = args,
-            .raw_input = rawInput,
-            .outer_shell = self.outer_shell,
+            .raw_input = raw_input,
         };
-        const builtin_handler = self.findBuiltInCommand(commandName);
-        if (builtin_handler) |handler| {
+
+        if (self.findBuiltInCommand(command_name)) |handler| {
             try handler(ctx);
             return;
         }
 
-        const command_path = self.outer_shell.findExecutable(commandName);
-        if (command_path) |_| {
-            try self.outer_shell.executeCommand(commandName, args);
+        if (self.outer_shell.findExecutable(command_name)) |_| {
+            try self.outer_shell.executeCommand(command_name, args);
             return;
         }
 
-        try handleNotFound(ctx);
+        try terminal.print("{s}: command not found\n", .{command_name});
     }
 
-    pub fn run(self: *ConsoleApp) void {
-        self.is_running = true;
+    pub fn findBuiltInCommand(self: *ConsoleApp, name: []const u8) ?Handler {
+        var lower_buf: [256]u8 = undefined;
+        const name_lower = std.ascii.lowerString(lower_buf[0..name.len], name);
+        return self.builder.commands.get(name_lower);
     }
 
     pub fn findCompletions(self: *ConsoleApp, arena: std.mem.Allocator, prefix: []const u8) ![]const []const u8 {
         var matches = std.ArrayListUnmanaged([]const u8){};
 
-        var builtin_iter = self.app_builder.commands.keyIterator();
+        var builtin_iter = self.builder.commands.keyIterator();
         while (builtin_iter.next()) |key| {
             if (std.mem.startsWith(u8, key.*, prefix)) {
                 try matches.append(arena, key.*);
@@ -119,16 +291,70 @@ pub const ConsoleApp = struct {
 
         return matches.toOwnedSlice(arena);
     }
+
+    fn updateSelection(self: *ConsoleApp, terminal: *Terminal, line: *std.ArrayList(u8), matches: []const []const u8, index: usize, display_len: *usize) !void {
+        const match = matches[index];
+
+        for (0..display_len.*) |_| {
+            try terminal.backspace();
+        }
+
+        line.clearRetainingCapacity();
+        try line.appendSlice(self.allocator, match);
+        display_len.* = match.len;
+
+        try terminal.print("{s}", .{match});
+        try self.renderDropdown(terminal, matches, index);
+        try terminal.flush();
+    }
+
+    fn renderDropdown(self: *ConsoleApp, terminal: *Terminal, matches: []const []const u8, selected: usize) !void {
+        _ = self;
+        try terminal.cursorSave();
+
+        const max_display = @min(matches.len, 8);
+        for (0..max_display) |i| {
+            try terminal.print("\n", .{});
+            try terminal.clearLine();
+            if (i == selected) {
+                try terminal.highlight(matches[i]);
+            } else {
+                try terminal.print("  {s}", .{matches[i]});
+            }
+        }
+
+        if (matches.len > 8) {
+            try terminal.print("\n", .{});
+            try terminal.clearLine();
+            try terminal.print("  ... and {d} more", .{matches.len - 8});
+        }
+
+        try terminal.cursorRestore();
+    }
+
+    fn clearDropdown(self: *ConsoleApp, terminal: *Terminal, count: usize) !void {
+        _ = self;
+        try terminal.cursorSave();
+
+        const lines = @min(count, 8) + if (count > 8) @as(usize, 1) else @as(usize, 0);
+        for (0..lines) |_| {
+            try terminal.print("\n", .{});
+            try terminal.clearLine();
+        }
+
+        try terminal.cursorRestore();
+    }
+
+    pub fn stop(self: *ConsoleApp) void {
+        self.is_running = false;
+    }
 };
 
 fn comptimeLower(comptime s: []const u8) *const [s.len]u8 {
     comptime {
         var buf: [s.len]u8 = undefined;
         _ = std.ascii.lowerString(&buf, s);
-        const final = buf; //needs copying
+        const final = buf;
         return &final;
     }
-}
-pub fn handleNotFound(ctx: CommandContext) !void {
-    try ctx.output_writer.print("{s}: command not found\n", .{ctx.command_name});
 }
