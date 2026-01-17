@@ -144,6 +144,7 @@ pub const ConsoleApp = struct {
                         current_matches = try self.findCompletions(completion_arena.allocator(), original_prefix);
                         tab_index = 0;
                         display_len = line.items.len;
+                        try terminal.print("\x07", .{});
                     }
 
                     if (current_matches.len > 0) {
@@ -162,7 +163,6 @@ pub const ConsoleApp = struct {
                         if (current_matches.len == 1) {
                             try line.append(self.allocator, ' ');
                         }
-
 
                         try terminal.print("{s} ", .{match});
 
@@ -217,11 +217,10 @@ pub const ConsoleApp = struct {
                     tab_index = 0;
                     current_matches = &.{};
                 },
-                .char => |c| {                
+                .char => |c| {
                     if (dropdown_open) {
                         try self.clearDropdown(&terminal, current_matches.len);
                         dropdown_open = false;
-                        
                     }
                     try line.append(self.allocator, c);
                     try terminal.print("{c}", .{c});
