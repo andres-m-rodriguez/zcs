@@ -35,12 +35,12 @@ pub fn main() !void {
             );
 
             if (is_command_found == false) {
-                try stdout.print("{s} command not found \n", .{command_input[0..index]});
+                try stdout.print("{s}: command not found \n", .{command_input[0..index]});
             }
         } else {
             const is_command_found = try app.handleCommand(command_input, command_input, command_input);
             if (is_command_found == false) {
-                try stdout.print("{s} command not found \n", .{command_input});
+                try stdout.print("{s}: command not found \n", .{command_input});
             }
         }
 
@@ -59,6 +59,6 @@ pub fn handleType(ctx: console.CommandContext) !void {
     if (built_in_command) |_| {
         try ctx.output_writer.print("{s} is a shell builtin \n", .{ctx.args});
     } else {
-        try ctx.output_writer.print("{s}: not found\n", .{ctx.args});
+        try ctx.output_writer.print("{s}: command not found \n", .{ctx.args});
     }
 }
