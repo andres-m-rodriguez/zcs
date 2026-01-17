@@ -14,18 +14,27 @@ fn handleExit(ctx: console.CommandContext) !void {
 }
 
 fn handleEcho(ctx: console.CommandContext) !void {
-    try ctx.terminal.print("{s}\n", .{ctx.args});
+    for (ctx.args, 0..) |arg, i| {
+        if (i > 0) try ctx.terminal.print(" ", .{});
+        try ctx.terminal.print("{s}", .{arg});
+    }
+    try ctx.terminal.print("\n", .{});
 }
 
 fn handleType(ctx: console.CommandContext) !void {
-    if (ctx.app.findBuiltInCommand(ctx.args)) |_| {
-        try ctx.terminal.print("{s} is a shell builtin\n", .{ctx.args});
+    if (ctx.args.len == 0) {
+        try ctx.terminal.print("type: missing argument\n", .{});
         return;
     }
-    if (ctx.app.outer_shell.findExecutable(ctx.args)) |path| {
-        try ctx.terminal.print("{s} is {s}\n", .{ ctx.args, path });
+    const name = ctx.args[0];
+    if (ctx.app.findBuiltInCommand(name)) |_| {
+        try ctx.terminal.print("{s} is a shell builtin\n", .{name});
+        return;
+    }
+    if (ctx.app.outer_shell.findExecutable(name)) |path| {
+        try ctx.terminal.print("{s} is {s}\n", .{ name, path });
     } else {
-        try ctx.terminal.print("{s}: not found\n", .{ctx.args});
+        try ctx.terminal.print("{s}: not found\n", .{name});
     }
 }
 
@@ -39,23 +48,25 @@ fn handlePwd(ctx: console.CommandContext) !void {
 }
 
 fn handleCd(ctx: console.CommandContext) !void {
+    const arg = if (ctx.args.len > 0) ctx.args[0] else "";
+
     const path = blk: {
-        if (ctx.args.len == 0 or std.mem.eql(u8, ctx.args, "~")) {
+        if (arg.len == 0 or std.mem.eql(u8, arg, "~")) {
             break :blk std.process.getEnvVarOwned(ctx.allocator, "HOME") catch {
                 try ctx.terminal.print("cd: HOME not set\n", .{});
                 return;
             };
-        } else if (std.mem.startsWith(u8, ctx.args, "~/")) {
+        } else if (std.mem.startsWith(u8, arg, "~/")) {
             const home = std.process.getEnvVarOwned(ctx.allocator, "HOME") catch {
                 try ctx.terminal.print("cd: HOME not set\n", .{});
                 return;
             };
-            break :blk std.fmt.allocPrint(ctx.allocator, "{s}{s}", .{ home, ctx.args[1..] }) catch {
+            break :blk std.fmt.allocPrint(ctx.allocator, "{s}{s}", .{ home, arg[1..] }) catch {
                 try ctx.terminal.print("cd: error\n", .{});
                 return;
             };
         } else {
-            break :blk ctx.args;
+            break :blk arg;
         }
     };
 

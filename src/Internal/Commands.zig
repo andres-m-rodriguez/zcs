@@ -2,6 +2,7 @@ const std = @import("std");
 const OuterShell = @import("OuterShell.zig").OuterShell;
 const Terminal = @import("Terminal.zig").Terminal;
 const Key = @import("Terminal.zig").Key;
+const Parser = @import("Parser.zig");
 
 pub const Handler = *const fn (ctx: CommandContext) anyerror!void;
 
@@ -10,7 +11,7 @@ pub const CommandContext = struct {
     terminal: *Terminal,
     allocator: std.mem.Allocator,
     command_name: []const u8,
-    args: []const u8,
+    args: []const []const u8,
     raw_input: []const u8,
 };
 
@@ -91,14 +92,13 @@ pub const ConsoleApp = struct {
                     try terminal.flush();
 
                     if (line.items.len > 0) {
-                        const input = line.items;
-                        var iter = std.mem.tokenizeScalar(u8, input, ' ');
-                        const command_name = iter.next() orelse "";
-                        const args_start = if (command_name.len < input.len) command_name.len + 1 else command_name.len;
-                        const args = if (args_start < input.len) input[args_start..] else "";
+                        var parsed = try Parser.parse(self.allocator, line.items);
+                        defer parsed.deinit(self.allocator);
 
-                        try self.handleCommand(&terminal, command_name, args, input);
-                        try terminal.flush();
+                        if (parsed.executable.len > 0) {
+                            try self.handleCommand(&terminal, parsed.executable, parsed.args, line.items);
+                            try terminal.flush();
+                        }
                     }
 
                     line.clearRetainingCapacity();
@@ -222,21 +222,11 @@ pub const ConsoleApp = struct {
         defer terminal.deinit();
 
         const command_name = args[1];
-        var arg_buf = std.ArrayList(u8){};
-        defer arg_buf.deinit(self.allocator);
-
-        for (args[2..]) |arg| {
-            if (arg_buf.items.len > 0) {
-                try arg_buf.append(self.allocator, ' ');
-            }
-            try arg_buf.appendSlice(self.allocator, arg);
-        }
-
-        try self.handleCommand(&terminal, command_name, arg_buf.items, command_name);
+        try self.handleCommand(&terminal, command_name, args[2..], command_name);
         try terminal.flush();
     }
 
-    fn handleCommand(self: *ConsoleApp, terminal: *Terminal, command_name: []const u8, args: []const u8, raw_input: []const u8) !void {
+    fn handleCommand(self: *ConsoleApp, terminal: *Terminal, command_name: []const u8, args: []const []const u8, raw_input: []const u8) !void {
         const ctx = CommandContext{
             .app = self,
             .terminal = terminal,
@@ -252,7 +242,7 @@ pub const ConsoleApp = struct {
         }
 
         if (self.outer_shell.findExecutable(command_name)) |_| {
-            try self.outer_shell.executeCommand(command_name, args);
+            try self.outer_shell.executeCommandParsed(command_name, args);
             return;
         }
 
