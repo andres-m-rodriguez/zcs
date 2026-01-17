@@ -4,6 +4,7 @@ pub const ParsedCommand = struct {
     executable: []const u8,
     args: []const []const u8,
     stdout_redirect: ?[]const u8 = null,
+    stderr_redirect: ?[]const u8 = null,
 
     pub fn deinit(self: *ParsedCommand, allocator: std.mem.Allocator) void {
         allocator.free(self.executable);
@@ -12,6 +13,9 @@ pub const ParsedCommand = struct {
         }
         allocator.free(self.args);
         if (self.stdout_redirect) |path| {
+            allocator.free(path);
+        }
+        if (self.stderr_redirect) |path| {
             allocator.free(path);
         }
     }
@@ -81,6 +85,7 @@ pub fn parse(allocator: std.mem.Allocator, input: []const u8) !ParsedCommand {
     }
 
     var stdout_redirect: ?[]const u8 = null;
+    var stderr_redirect: ?[]const u8 = null;
     var filtered_tokens = std.ArrayList([]const u8){};
     defer filtered_tokens.deinit(allocator);
 
@@ -96,9 +101,23 @@ pub fn parse(allocator: std.mem.Allocator, input: []const u8) !ParsedCommand {
             } else {
                 idx += 1;
             }
+        } else if (std.mem.eql(u8, token, "2>")) {
+            allocator.free(token);
+            if (idx + 1 < tokens.items.len) {
+                if (stderr_redirect) |old| allocator.free(old);
+                stderr_redirect = tokens.items[idx + 1];
+                idx += 2;
+            } else {
+                idx += 1;
+            }
         } else if (std.mem.startsWith(u8, token, "1>") and token.len > 2) {
             if (stdout_redirect) |old| allocator.free(old);
             stdout_redirect = try allocator.dupe(u8, token[2..]);
+            allocator.free(token);
+            idx += 1;
+        } else if (std.mem.startsWith(u8, token, "2>") and token.len > 2) {
+            if (stderr_redirect) |old| allocator.free(old);
+            stderr_redirect = try allocator.dupe(u8, token[2..]);
             allocator.free(token);
             idx += 1;
         } else if (token.len > 1 and token[0] == '>' and token[1] != '>') {
@@ -114,6 +133,7 @@ pub fn parse(allocator: std.mem.Allocator, input: []const u8) !ParsedCommand {
 
     if (filtered_tokens.items.len == 0) {
         if (stdout_redirect) |path| allocator.free(path);
+        if (stderr_redirect) |path| allocator.free(path);
         return ParsedCommand{
             .executable = try allocator.dupe(u8, ""),
             .args = try allocator.alloc([]const u8, 0),
@@ -127,6 +147,7 @@ pub fn parse(allocator: std.mem.Allocator, input: []const u8) !ParsedCommand {
         .executable = executable,
         .args = args,
         .stdout_redirect = stdout_redirect,
+        .stderr_redirect = stderr_redirect,
     };
 }
 

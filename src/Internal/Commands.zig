@@ -14,9 +14,21 @@ pub const CommandContext = struct {
     args: []const []const u8,
     raw_input: []const u8,
     stdout_file: ?std.fs.File = null,
+    stderr_file: ?std.fs.File = null,
 
     pub fn write(self: *const CommandContext, comptime fmt: []const u8, args_fmt: anytype) !void {
         if (self.stdout_file) |file| {
+            var buf: [4096]u8 = undefined;
+            var writer = file.writerStreaming(&buf);
+            try writer.interface.print(fmt, args_fmt);
+            try writer.interface.flush();
+        } else {
+            try self.terminal.print(fmt, args_fmt);
+        }
+    }
+
+    pub fn writeErr(self: *const CommandContext, comptime fmt: []const u8, args_fmt: anytype) !void {
+        if (self.stderr_file) |file| {
             var buf: [4096]u8 = undefined;
             var writer = file.writerStreaming(&buf);
             try writer.interface.print(fmt, args_fmt);
@@ -108,7 +120,7 @@ pub const ConsoleApp = struct {
                         defer parsed.deinit(self.allocator);
 
                         if (parsed.executable.len > 0) {
-                            try self.handleCommand(&terminal, parsed.executable, parsed.args, line.items, parsed.stdout_redirect);
+                            try self.handleCommand(&terminal, parsed.executable, parsed.args, line.items, parsed.stdout_redirect, parsed.stderr_redirect);
                             try terminal.flush();
                         }
                     }
@@ -234,16 +246,26 @@ pub const ConsoleApp = struct {
         defer terminal.deinit();
 
         const command_name = args[1];
-        try self.handleCommand(&terminal, command_name, args[2..], command_name, null);
+        try self.handleCommand(&terminal, command_name, args[2..], command_name, null, null);
         try terminal.flush();
     }
 
-    fn handleCommand(self: *ConsoleApp, terminal: *Terminal, command_name: []const u8, args: []const []const u8, raw_input: []const u8, stdout_redirect: ?[]const u8) !void {
+    fn handleCommand(self: *ConsoleApp, terminal: *Terminal, command_name: []const u8, args: []const []const u8, raw_input: []const u8, stdout_redirect: ?[]const u8, stderr_redirect: ?[]const u8) !void {
         var stdout_file: ?std.fs.File = null;
         defer if (stdout_file) |f| f.close();
 
+        var stderr_file: ?std.fs.File = null;
+        defer if (stderr_file) |f| f.close();
+
         if (stdout_redirect) |path| {
             stdout_file = std.fs.cwd().createFile(path, .{}) catch |err| {
+                try terminal.print("cannot open {s}: {}\n", .{ path, err });
+                return;
+            };
+        }
+
+        if (stderr_redirect) |path| {
+            stderr_file = std.fs.cwd().createFile(path, .{}) catch |err| {
                 try terminal.print("cannot open {s}: {}\n", .{ path, err });
                 return;
             };
@@ -257,6 +279,7 @@ pub const ConsoleApp = struct {
             .args = args,
             .raw_input = raw_input,
             .stdout_file = stdout_file,
+            .stderr_file = stderr_file,
         };
 
         if (self.findBuiltInCommand(command_name)) |handler| {
@@ -265,7 +288,7 @@ pub const ConsoleApp = struct {
         }
 
         if (self.outer_shell.findExecutable(command_name)) |_| {
-            try self.outer_shell.executeCommandParsed(command_name, args, stdout_file);
+            try self.outer_shell.executeCommandParsed(command_name, args, stdout_file, stderr_file);
             return;
         }
 
