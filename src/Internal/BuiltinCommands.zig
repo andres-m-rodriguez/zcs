@@ -6,6 +6,7 @@ pub fn registerBuiltInCommands(builder: *console.ConsoleAppBuilder, allocator: s
     try builder.addCommand(allocator, "echo", handleEcho);
     try builder.addCommand(allocator, "type", handleType);
     try builder.addCommand(allocator, "pwd", handlePwd);
+try builder.addCommand(allocator, "cd", handleCd);
 }
 
 pub fn handleExit(ctx: console.CommandContext) !void {
@@ -33,4 +34,15 @@ pub fn handlePwd(ctx: console.CommandContext) !void {
         return;
     };
     try ctx.output_writer.print("{s}\n", .{cwd});
+}
+pub fn handleCd(ctx: console.CommandContext) !void {
+    const path = if (ctx.args.len == 0)
+        std.process.getEnvVarOwned(ctx.allocator, "HOME") catch "/"
+    else
+        ctx.args;
+
+    std.process.changeCurDir(path) catch {
+        try ctx.output_writer.print("cd: {s}: No such file or directory\n", .{path});
+        return;
+    };
 }
