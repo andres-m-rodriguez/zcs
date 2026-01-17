@@ -144,13 +144,12 @@ pub const ConsoleApp = struct {
                         current_matches = try self.findCompletions(completion_arena.allocator(), original_prefix);
                         tab_index = 0;
                         display_len = line.items.len;
-                        // TODO: Remove bell sound later
-                        if (current_matches.len == 0) {
-                            try terminal.print("\x07", .{});
-                        }
                     }
 
-                    if (current_matches.len > 0) {
+                    // TODO: Remove bell sound later
+                    if (current_matches.len == 0) {
+                        try terminal.print("\x07", .{});
+                    } else if (current_matches.len > 0) {
                         if (tab_index >= current_matches.len) {
                             tab_index = 0;
                         }
