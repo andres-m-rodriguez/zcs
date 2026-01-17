@@ -59,6 +59,6 @@ pub fn handleType(ctx: console.CommandContext) !void {
     if (built_in_command) |_| {
         try ctx.output_writer.print("{s} is a shell builtin \n", .{ctx.args});
     } else {
-        try ctx.output_writer.print("{s} command not found \n", .{ctx.args});
+        try ctx.output_writer.print("{s}: not found\n", .{ctx.args});
     }
 }
