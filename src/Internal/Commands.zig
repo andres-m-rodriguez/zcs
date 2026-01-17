@@ -159,8 +159,12 @@ pub const ConsoleApp = struct {
                         line.clearRetainingCapacity();
                         try line.appendSlice(self.allocator, match);
                         display_len = match.len;
+                        if (current_matches.len == 1) {
+                            try line.append(self.allocator, ' ');
+                        }
 
-                        try terminal.print("{s}", .{match});
+
+                        try terminal.print("{s} ", .{match});
 
                         if (current_matches.len > 1) {
                             try self.renderDropdown(&terminal, current_matches, tab_index);
@@ -213,10 +217,11 @@ pub const ConsoleApp = struct {
                     tab_index = 0;
                     current_matches = &.{};
                 },
-                .char => |c| {
+                .char => |c| {                
                     if (dropdown_open) {
                         try self.clearDropdown(&terminal, current_matches.len);
                         dropdown_open = false;
+                        
                     }
                     try line.append(self.allocator, c);
                     try terminal.print("{c}", .{c});
