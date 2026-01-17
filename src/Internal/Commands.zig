@@ -146,11 +146,7 @@ pub const ConsoleApp = struct {
                         display_len = line.items.len;
                     }
 
-                    // TODO: Remove bell sound later
-                    if (current_matches.len == 0) {
-                        try terminal.print("\x07", .{});
-                        try terminal.flush();
-                    } else if (current_matches.len > 0) {
+                    if (current_matches.len > 0) {
                         if (tab_index >= current_matches.len) {
                             tab_index = 0;
                         }
