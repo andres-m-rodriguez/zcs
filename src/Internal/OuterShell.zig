@@ -92,15 +92,16 @@ pub const OuterShell = struct {
                     } else |_| {}
                 }
             } else {
-                var dir_handle = std.fs.openDirAbsolute(dir, .{}) catch continue;
-                const stat = dir_handle.statFile(command) catch {
-                    dir_handle.close();
-                    continue;
-                };
-                dir_handle.close();
-                if (stat.kind != .file) continue;
-                const full = std.fmt.bufPrint(&path_buf, "{s}{c}{s}", .{ dir, std.fs.path.sep, command }) catch continue;
-                return self.allocator.dupe(u8, full) catch return null;
+                var dir_handle = std.fs.openDirAbsolute(dir, .{ .iterate = true }) catch continue;
+                defer dir_handle.close();
+
+                var iter = dir_handle.iterate();
+                while (iter.next() catch null) |entry| {
+                    if (entry.kind == .file and std.mem.eql(u8, entry.name, command)) {
+                        const full = std.fmt.bufPrint(&path_buf, "{s}{c}{s}", .{ dir, std.fs.path.sep, command }) catch continue;
+                        return self.allocator.dupe(u8, full) catch return null;
+                    }
+                }
             }
         }
         return null;
