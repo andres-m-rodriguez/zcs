@@ -1,57 +1,110 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+pub const OuterShell = struct {
+    commands: std.StringHashMapUnmanaged([]const u8),
+    allocator: std.mem.Allocator,
 
-pub fn findExecutable(allocator: std.mem.Allocator, command: []const u8) ?[]const u8 {
-    const path_env = std.process.getEnvVarOwned(allocator, "PATH") catch return null;
-    defer allocator.free(path_env);
+    pub fn init(allocator: std.mem.Allocator) !OuterShell {
+        var shell = OuterShell{
+            .commands = .{},
+            .allocator = allocator,
+        };
+        try shell.cacheExecutables();
+        return shell;
+    }
 
-    const separator = if (builtin.os.tag == .windows) ';' else ':';
-    var path_iter = std.mem.splitScalar(u8, path_env, separator);
+    pub fn deinit(self: *OuterShell) void {
+        var iter = self.commands.iterator();
+        while (iter.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+            self.allocator.free(entry.value_ptr.*);
+        }
+        self.commands.deinit(self.allocator);
+    }
 
-    // On Windows, try with .exe extension
-    const extensions: []const []const u8 = if (builtin.os.tag == .windows)
-        &.{ ".exe", ".cmd", ".bat", "" }
-    else
-        &.{""};
+    fn cacheExecutables(self: *OuterShell) !void {
+        const path_env = std.process.getEnvVarOwned(self.allocator, "PATH") catch return;
+        defer self.allocator.free(path_env);
 
-    while (path_iter.next()) |dir| {
-        for (extensions) |ext| {
-            var path_buf: [std.fs.max_path_bytes]u8 = undefined;
-            const full_path = std.fmt.bufPrint(&path_buf, "{s}{c}{s}{s}", .{
-                dir,
-                std.fs.path.sep,
-                command,
-                ext,
-            }) catch continue;
+        const separator = if (builtin.os.tag == .windows) ';' else ':';
+        var path_iter = std.mem.splitScalar(u8, path_env, separator);
 
-            const file = std.fs.openFileAbsolute(full_path, .{}) catch continue;
-            defer file.close();
+        while (path_iter.next()) |dir| {
+            if (dir.len == 0) continue;
+            if (!std.fs.path.isAbsolute(dir)) continue;
+            var dir_handle = std.fs.openDirAbsolute(dir, .{ .iterate = true }) catch continue;
+            defer dir_handle.close();
 
-            if (builtin.os.tag != .windows) {
-                const stat = file.stat() catch continue;
-                const is_executable = (stat.mode & std.posix.S.IXUSR) != 0;
-                if (!is_executable) continue;
+            var iter = dir_handle.iterate();
+            while (try iter.next()) |entry| {
+                if (entry.kind == .file) {
+                    const cmd_name = if (builtin.os.tag == .windows) blk: {
+                        const ext = std.fs.path.extension(entry.name);
+                        if (ext.len == 0) break :blk entry.name;
+                        if (std.ascii.eqlIgnoreCase(ext, ".exe") or
+                            std.ascii.eqlIgnoreCase(ext, ".cmd") or
+                            std.ascii.eqlIgnoreCase(ext, ".bat") or
+                            std.ascii.eqlIgnoreCase(ext, ".com"))
+                        {
+                            break :blk entry.name[0 .. entry.name.len - ext.len];
+                        }
+                        continue;
+                    } else entry.name;
+
+                    if (self.commands.contains(cmd_name)) continue;
+
+                    const name = self.allocator.dupe(u8, cmd_name) catch continue;
+
+                    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+                    const full_path = std.fmt.bufPrint(&path_buf, "{s}{c}{s}", .{
+                        dir,
+                        std.fs.path.sep,
+                        entry.name,
+                    }) catch continue;
+
+                    const path_copy = self.allocator.dupe(u8, full_path) catch continue;
+                    self.commands.put(self.allocator, name, path_copy) catch continue;
+                }
             }
-
-            return allocator.dupe(u8, full_path) catch return null;
         }
     }
 
-    return null;
-}
-
-pub fn executeCommandLine(allocator:std.mem.Allocator, command: []const u8, commandName:[]const u8, args:[] const u8) !void {
-    var arg_list = std.ArrayList([]const u8) {};
-    defer arg_list.deinit(allocator);
-_ = command;
-    try arg_list.append(allocator, commandName);
-    var args_it = std.mem.tokenizeScalar(u8, args, ' ');
-    while(args_it.next()) |arg|{
-        try arg_list.append(allocator, arg);
+    pub fn findExecutable(self: *OuterShell, command: []const u8) ?[]const u8 {
+        return self.commands.get(command);
     }
 
-    var proccess = std.process.Child.init(arg_list.items, allocator);
-    
-    _ = try proccess.spawnAndWait();
-}
+    pub fn findCompletions(self: *OuterShell, arena: std.mem.Allocator, prefix: []const u8) ![]const []const u8 {
+        var matches = std.ArrayListUnmanaged([]const u8){};
+
+        var iter = self.commands.keyIterator();
+        while (iter.next()) |key| {
+            if (std.mem.startsWith(u8, key.*, prefix)) {
+                try matches.append(arena, key.*);
+            }
+        }
+
+        return matches.toOwnedSlice(arena);
+    }
+
+    pub fn executeCommand(self: *OuterShell, commandName: []const u8, args: []const u8) !void {
+        const path = self.findExecutable(commandName) orelse return error.CommandNotFound;
+
+        var arg_list = std.ArrayListUnmanaged([]const u8){};
+        defer arg_list.deinit(self.allocator);
+
+        try arg_list.append(self.allocator, path);
+
+        var args_it = std.mem.tokenizeScalar(u8, args, ' ');
+        while (args_it.next()) |arg| {
+            try arg_list.append(self.allocator, arg);
+        }
+
+        var child = std.process.Child.init(arg_list.items, self.allocator);
+        child.stdin_behavior = .Inherit;
+        child.stdout_behavior = .Inherit;
+        child.stderr_behavior = .Inherit;
+
+        _ = try child.spawnAndWait();
+    }
+};
