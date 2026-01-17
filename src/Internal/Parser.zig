@@ -3,6 +3,7 @@ const std = @import("std");
 pub const ParsedCommand = struct {
     executable: []const u8,
     args: []const []const u8,
+    stdout_redirect: ?[]const u8 = null,
 
     pub fn deinit(self: *ParsedCommand, allocator: std.mem.Allocator) void {
         allocator.free(self.executable);
@@ -10,6 +11,9 @@ pub const ParsedCommand = struct {
             allocator.free(arg);
         }
         allocator.free(self.args);
+        if (self.stdout_redirect) |path| {
+            allocator.free(path);
+        }
     }
 };
 
@@ -76,12 +80,53 @@ pub fn parse(allocator: std.mem.Allocator, input: []const u8) !ParsedCommand {
         };
     }
 
-    const executable = tokens.items[0];
-    const args = try allocator.dupe([]const u8, tokens.items[1..]);
+    var stdout_redirect: ?[]const u8 = null;
+    var filtered_tokens = std.ArrayList([]const u8){};
+    defer filtered_tokens.deinit(allocator);
+
+    var idx: usize = 0;
+    while (idx < tokens.items.len) {
+        const token = tokens.items[idx];
+        if (std.mem.eql(u8, token, ">") or std.mem.eql(u8, token, "1>")) {
+            allocator.free(token);
+            if (idx + 1 < tokens.items.len) {
+                if (stdout_redirect) |old| allocator.free(old);
+                stdout_redirect = tokens.items[idx + 1];
+                idx += 2;
+            } else {
+                idx += 1;
+            }
+        } else if (std.mem.startsWith(u8, token, "1>") and token.len > 2) {
+            if (stdout_redirect) |old| allocator.free(old);
+            stdout_redirect = try allocator.dupe(u8, token[2..]);
+            allocator.free(token);
+            idx += 1;
+        } else if (token.len > 1 and token[0] == '>' and token[1] != '>') {
+            if (stdout_redirect) |old| allocator.free(old);
+            stdout_redirect = try allocator.dupe(u8, token[1..]);
+            allocator.free(token);
+            idx += 1;
+        } else {
+            try filtered_tokens.append(allocator, token);
+            idx += 1;
+        }
+    }
+
+    if (filtered_tokens.items.len == 0) {
+        if (stdout_redirect) |path| allocator.free(path);
+        return ParsedCommand{
+            .executable = try allocator.dupe(u8, ""),
+            .args = try allocator.alloc([]const u8, 0),
+        };
+    }
+
+    const executable = filtered_tokens.items[0];
+    const args = try allocator.dupe([]const u8, filtered_tokens.items[1..]);
 
     return ParsedCommand{
         .executable = executable,
         .args = args,
+        .stdout_redirect = stdout_redirect,
     };
 }
 

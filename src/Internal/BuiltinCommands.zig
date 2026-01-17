@@ -15,10 +15,10 @@ fn handleExit(ctx: console.CommandContext) !void {
 
 fn handleEcho(ctx: console.CommandContext) !void {
     for (ctx.args, 0..) |arg, i| {
-        if (i > 0) try ctx.terminal.print(" ", .{});
-        try ctx.terminal.print("{s}", .{arg});
+        if (i > 0) try ctx.write(" ", .{});
+        try ctx.write("{s}", .{arg});
     }
-    try ctx.terminal.print("\n", .{});
+    try ctx.write("\n", .{});
 }
 
 fn handleType(ctx: console.CommandContext) !void {
@@ -28,13 +28,13 @@ fn handleType(ctx: console.CommandContext) !void {
     }
     const name = ctx.args[0];
     if (ctx.app.findBuiltInCommand(name)) |_| {
-        try ctx.terminal.print("{s} is a shell builtin\n", .{name});
+        try ctx.write("{s} is a shell builtin\n", .{name});
         return;
     }
     if (ctx.app.outer_shell.findExecutable(name)) |path| {
-        try ctx.terminal.print("{s} is {s}\n", .{ name, path });
+        try ctx.write("{s} is {s}\n", .{ name, path });
     } else {
-        try ctx.terminal.print("{s}: not found\n", .{name});
+        try ctx.write("{s}: not found\n", .{name});
     }
 }
 
@@ -44,7 +44,7 @@ fn handlePwd(ctx: console.CommandContext) !void {
         try ctx.terminal.print("pwd: error getting current directory\n", .{});
         return;
     };
-    try ctx.terminal.print("{s}\n", .{cwd});
+    try ctx.write("{s}\n", .{cwd});
 }
 
 fn handleCd(ctx: console.CommandContext) !void {

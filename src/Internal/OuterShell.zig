@@ -148,7 +148,7 @@ pub const OuterShell = struct {
         _ = try child.spawnAndWait();
     }
 
-    pub fn executeCommandParsed(self: *OuterShell, commandName: []const u8, args: []const []const u8) !void {
+    pub fn executeCommandParsed(self: *OuterShell, commandName: []const u8, args: []const []const u8, stdout_file: ?std.fs.File) !void {
         _ = self.findExecutable(commandName) orelse return error.CommandNotFound;
 
         var arg_list = std.ArrayListUnmanaged([]const u8){};
@@ -162,9 +162,22 @@ pub const OuterShell = struct {
 
         var child = std.process.Child.init(arg_list.items, self.allocator);
         child.stdin_behavior = .Inherit;
-        child.stdout_behavior = .Inherit;
+        child.stdout_behavior = if (stdout_file != null) .Pipe else .Inherit;
         child.stderr_behavior = .Inherit;
 
-        _ = try child.spawnAndWait();
+        try child.spawn();
+
+        if (stdout_file) |file| {
+            if (child.stdout) |stdout| {
+                var buf: [4096]u8 = undefined;
+                while (true) {
+                    const n = stdout.read(&buf) catch break;
+                    if (n == 0) break;
+                    _ = file.write(buf[0..n]) catch break;
+                }
+            }
+        }
+
+        _ = child.wait() catch {};
     }
 };
