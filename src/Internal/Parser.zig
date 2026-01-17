@@ -5,6 +5,8 @@ pub const ParsedCommand = struct {
     args: []const []const u8,
     stdout_redirect: ?[]const u8 = null,
     stderr_redirect: ?[]const u8 = null,
+    stdout_append: bool = false,
+    stderr_append: bool = false,
 
     pub fn deinit(self: *ParsedCommand, allocator: std.mem.Allocator) void {
         allocator.free(self.executable);
@@ -86,17 +88,60 @@ pub fn parse(allocator: std.mem.Allocator, input: []const u8) !ParsedCommand {
 
     var stdout_redirect: ?[]const u8 = null;
     var stderr_redirect: ?[]const u8 = null;
+    var stdout_append: bool = false;
+    var stderr_append: bool = false;
     var filtered_tokens = std.ArrayList([]const u8){};
     defer filtered_tokens.deinit(allocator);
 
     var idx: usize = 0;
     while (idx < tokens.items.len) {
         const token = tokens.items[idx];
-        if (std.mem.eql(u8, token, ">") or std.mem.eql(u8, token, "1>")) {
+        // Check append operators first (>> before >)
+        if (std.mem.eql(u8, token, ">>") or std.mem.eql(u8, token, "1>>")) {
             allocator.free(token);
             if (idx + 1 < tokens.items.len) {
                 if (stdout_redirect) |old| allocator.free(old);
                 stdout_redirect = tokens.items[idx + 1];
+                stdout_append = true;
+                idx += 2;
+            } else {
+                idx += 1;
+            }
+        } else if (std.mem.eql(u8, token, "2>>")) {
+            allocator.free(token);
+            if (idx + 1 < tokens.items.len) {
+                if (stderr_redirect) |old| allocator.free(old);
+                stderr_redirect = tokens.items[idx + 1];
+                stderr_append = true;
+                idx += 2;
+            } else {
+                idx += 1;
+            }
+        } else if (std.mem.startsWith(u8, token, "1>>") and token.len > 3) {
+            if (stdout_redirect) |old| allocator.free(old);
+            stdout_redirect = try allocator.dupe(u8, token[3..]);
+            stdout_append = true;
+            allocator.free(token);
+            idx += 1;
+        } else if (std.mem.startsWith(u8, token, "2>>") and token.len > 3) {
+            if (stderr_redirect) |old| allocator.free(old);
+            stderr_redirect = try allocator.dupe(u8, token[3..]);
+            stderr_append = true;
+            allocator.free(token);
+            idx += 1;
+        } else if (token.len > 2 and token[0] == '>' and token[1] == '>') {
+            if (stdout_redirect) |old| allocator.free(old);
+            stdout_redirect = try allocator.dupe(u8, token[2..]);
+            stdout_append = true;
+            allocator.free(token);
+            idx += 1;
+        // Then check overwrite operators
+        } else if (std.mem.eql(u8, token, ">") or std.mem.eql(u8, token, "1>")) {
+            allocator.free(token);
+            if (idx + 1 < tokens.items.len) {
+                if (stdout_redirect) |old| allocator.free(old);
+                stdout_redirect = tokens.items[idx + 1];
+                stdout_append = false;
                 idx += 2;
             } else {
                 idx += 1;
@@ -106,6 +151,7 @@ pub fn parse(allocator: std.mem.Allocator, input: []const u8) !ParsedCommand {
             if (idx + 1 < tokens.items.len) {
                 if (stderr_redirect) |old| allocator.free(old);
                 stderr_redirect = tokens.items[idx + 1];
+                stderr_append = false;
                 idx += 2;
             } else {
                 idx += 1;
@@ -113,16 +159,19 @@ pub fn parse(allocator: std.mem.Allocator, input: []const u8) !ParsedCommand {
         } else if (std.mem.startsWith(u8, token, "1>") and token.len > 2) {
             if (stdout_redirect) |old| allocator.free(old);
             stdout_redirect = try allocator.dupe(u8, token[2..]);
+            stdout_append = false;
             allocator.free(token);
             idx += 1;
         } else if (std.mem.startsWith(u8, token, "2>") and token.len > 2) {
             if (stderr_redirect) |old| allocator.free(old);
             stderr_redirect = try allocator.dupe(u8, token[2..]);
+            stderr_append = false;
             allocator.free(token);
             idx += 1;
         } else if (token.len > 1 and token[0] == '>' and token[1] != '>') {
             if (stdout_redirect) |old| allocator.free(old);
             stdout_redirect = try allocator.dupe(u8, token[1..]);
+            stdout_append = false;
             allocator.free(token);
             idx += 1;
         } else {
@@ -148,6 +197,8 @@ pub fn parse(allocator: std.mem.Allocator, input: []const u8) !ParsedCommand {
         .args = args,
         .stdout_redirect = stdout_redirect,
         .stderr_redirect = stderr_redirect,
+        .stdout_append = stdout_append,
+        .stderr_append = stderr_append,
     };
 }
 

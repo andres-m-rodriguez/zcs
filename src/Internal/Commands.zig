@@ -120,7 +120,7 @@ pub const ConsoleApp = struct {
                         defer parsed.deinit(self.allocator);
 
                         if (parsed.executable.len > 0) {
-                            try self.handleCommand(&terminal, parsed.executable, parsed.args, line.items, parsed.stdout_redirect, parsed.stderr_redirect);
+                            try self.handleCommand(&terminal, parsed.executable, parsed.args, line.items, parsed.stdout_redirect, parsed.stderr_redirect, parsed.stdout_append, parsed.stderr_append);
                             try terminal.flush();
                         }
                     }
@@ -246,11 +246,11 @@ pub const ConsoleApp = struct {
         defer terminal.deinit();
 
         const command_name = args[1];
-        try self.handleCommand(&terminal, command_name, args[2..], command_name, null, null);
+        try self.handleCommand(&terminal, command_name, args[2..], command_name, null, null, false, false);
         try terminal.flush();
     }
 
-    fn handleCommand(self: *ConsoleApp, terminal: *Terminal, command_name: []const u8, args: []const []const u8, raw_input: []const u8, stdout_redirect: ?[]const u8, stderr_redirect: ?[]const u8) !void {
+    fn handleCommand(self: *ConsoleApp, terminal: *Terminal, command_name: []const u8, args: []const []const u8, raw_input: []const u8, stdout_redirect: ?[]const u8, stderr_redirect: ?[]const u8, stdout_append: bool, stderr_append: bool) !void {
         var stdout_file: ?std.fs.File = null;
         defer if (stdout_file) |f| f.close();
 
@@ -258,17 +258,23 @@ pub const ConsoleApp = struct {
         defer if (stderr_file) |f| f.close();
 
         if (stdout_redirect) |path| {
-            stdout_file = std.fs.cwd().createFile(path, .{}) catch |err| {
+            stdout_file = std.fs.cwd().createFile(path, .{ .truncate = !stdout_append }) catch |err| {
                 try terminal.print("cannot open {s}: {}\n", .{ path, err });
                 return;
             };
+            if (stdout_append) {
+                stdout_file.?.seekFromEnd(0) catch {};
+            }
         }
 
         if (stderr_redirect) |path| {
-            stderr_file = std.fs.cwd().createFile(path, .{}) catch |err| {
+            stderr_file = std.fs.cwd().createFile(path, .{ .truncate = !stderr_append }) catch |err| {
                 try terminal.print("cannot open {s}: {}\n", .{ path, err });
                 return;
             };
+            if (stderr_append) {
+                stderr_file.?.seekFromEnd(0) catch {};
+            }
         }
 
         const ctx = CommandContext{
