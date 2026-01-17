@@ -98,6 +98,13 @@ pub const OuterShell = struct {
                 var iter = dir_handle.iterate();
                 while (iter.next() catch null) |entry| {
                     if (entry.kind == .file and std.mem.eql(u8, entry.name, command)) {
+                        const file = dir_handle.openFile(entry.name, .{}) catch continue;
+                        const stat = file.stat() catch {
+                            file.close();
+                            continue;
+                        };
+                        file.close();
+                        if (stat.mode & 0o111 == 0) continue;
                         const full = std.fmt.bufPrint(&path_buf, "{s}{c}{s}", .{ dir, std.fs.path.sep, command }) catch continue;
                         return self.allocator.dupe(u8, full) catch return null;
                     }
