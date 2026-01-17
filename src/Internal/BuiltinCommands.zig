@@ -36,12 +36,29 @@ pub fn handlePwd(ctx: console.CommandContext) !void {
     try ctx.output_writer.print("{s}\n", .{cwd});
 }
 pub fn handleCd(ctx: console.CommandContext) !void {
-    const path = if (ctx.args.len == 0)
-        std.process.getEnvVarOwned(ctx.allocator, "HOME") catch "/"
-    else
-        ctx.args;
+    const path = blk: {
+        if (ctx.args.len == 0 or std.mem.eql(u8, ctx.args, "~")) {
+            // cd or cd ~ -> go to HOME
+            break :blk std.process.getEnvVarOwned(ctx.allocator, "HOME") catch {
+                try ctx.output_writer.print("cd: HOME not set\n", .{});
+                return;
+            };
+        } else if (std.mem.startsWith(u8, ctx.args, "~/")) {
+            // cd ~/something -> expand ~ to HOME
+            const home = std.process.getEnvVarOwned(ctx.allocator, "HOME") catch {
+                try ctx.output_writer.print("cd: HOME not set\n", .{});
+                return;
+            };
+            break :blk std.fmt.allocPrint(ctx.allocator, "{s}{s}", .{ home, ctx.args[1..] }) catch {
+                try ctx.output_writer.print("cd: error\n", .{});
+                return;
+            };
+        } else {
+            break :blk ctx.args;
+        }
+    };
 
-    std.process.changeCurDir(path) catch {
+    std.posix.chdir(path) catch {
         try ctx.output_writer.print("cd: {s}: No such file or directory\n", .{path});
         return;
     };
