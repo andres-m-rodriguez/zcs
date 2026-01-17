@@ -71,7 +71,34 @@ pub const OuterShell = struct {
     }
 
     pub fn findExecutable(self: *OuterShell, command: []const u8) ?[]const u8 {
-        return self.commands.get(command);
+        const path_env = std.process.getEnvVarOwned(self.allocator, "PATH") catch return null;
+        defer self.allocator.free(path_env);
+
+        const separator = if (builtin.os.tag == .windows) ';' else ':';
+        var path_iter = std.mem.splitScalar(u8, path_env, separator);
+
+        while (path_iter.next()) |dir| {
+            if (dir.len == 0) continue;
+            if (!std.fs.path.isAbsolute(dir)) continue;
+
+            var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+
+            if (builtin.os.tag == .windows) {
+                const exts = [_][]const u8{ ".exe", ".cmd", ".bat", ".com" };
+                for (exts) |ext| {
+                    const full = std.fmt.bufPrint(&path_buf, "{s}{c}{s}{s}", .{ dir, std.fs.path.sep, command, ext }) catch continue;
+                    if (std.fs.cwd().access(full, .{})) |_| {
+                        return self.allocator.dupe(u8, full) catch return null;
+                    } else |_| {}
+                }
+            } else {
+                const full = std.fmt.bufPrint(&path_buf, "{s}{c}{s}", .{ dir, std.fs.path.sep, command }) catch continue;
+                if (std.fs.cwd().access(full, .{})) |_| {
+                    return self.allocator.dupe(u8, full) catch return null;
+                } else |_| {}
+            }
+        }
+        return null;
     }
 
     pub fn findCompletions(self: *OuterShell, arena: std.mem.Allocator, prefix: []const u8) ![]const []const u8 {
